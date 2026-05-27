@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -319,36 +321,32 @@ func httpConnectProxy(target, proxyAddr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	// 读取响应
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
+	// 读取响应（直到遇到空行）
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
 
 	// 检查 200 状态
-	resp := string(buf[:n])
-	if !contains(resp, "200") {
+	if !strings.Contains(line, "200") {
 		conn.Close()
-		return nil, fmt.Errorf("代理连接失败: %s", resp)
+		return nil, fmt.Errorf("代理连接失败: %s", strings.TrimSpace(line))
+	}
+
+	// 读取剩余响应头直到空行
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
 	}
 
 	return conn, nil
-}
-
-// contains 检查字符串是否包含子串
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
-}
-
-func containsSubstr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // tcpBufSize TCP 读取缓冲区大小，64KB 覆盖绝大多数调试场景

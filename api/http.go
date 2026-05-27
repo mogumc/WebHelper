@@ -130,12 +130,15 @@ func setupCookies(client *http.Client, req *HttpRequest) {
 	if len(req.Cookies) == 0 {
 		return
 	}
+	parsedURL, err := url.Parse(req.URL)
+	if err != nil {
+		return
+	}
 	cookieJar, _ := cookiejar.New(nil)
 	var cookieList []*http.Cookie
 	for name, value := range req.Cookies {
 		cookieList = append(cookieList, &http.Cookie{Name: name, Value: value})
 	}
-	parsedURL, _ := url.Parse(req.URL)
 	cookieJar.SetCookies(parsedURL, cookieList)
 	client.Jar = cookieJar
 }
