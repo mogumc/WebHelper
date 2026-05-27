@@ -1,0 +1,31 @@
+/* 基础样式 */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+#app {
+  height: 100vh;
+}
+
+/* 隐藏滚动条 - 通用方法 */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Element Plus textarea 内部滚动条隐藏 */
+.el-textarea__inner {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.el-textarea__inner::-webkit-scrollbar {
+  display: none;
+}
