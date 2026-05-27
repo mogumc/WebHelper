@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./frontend/public/appicon.png" alt="WebHelper" width="300"/>
+</p>
+
 # WebHelper
 
 基于 Wails v2 + Vue 3 + Element Plus 的网页调试助手桌面应用。
