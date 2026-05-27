@@ -213,7 +213,7 @@ jobs:
       - name: Package amd64
         run: |
           cd build/bin
-          hdiutil create -volname "WebHelper" -srcfolder webhelper-darwin-amd64.app \
+          hdiutil create -volname "WebHelper" -srcfolder webhelper.app \
             -ov -format UDZO -fs HFS+ webhelper-darwin-amd64.dmg
 
       - name: Build arm64
@@ -230,7 +230,7 @@ jobs:
       - name: Package arm64
         run: |
           cd build/bin
-          hdiutil create -volname "WebHelper" -srcfolder webhelper-darwin-arm64.app \
+          hdiutil create -volname "WebHelper" -srcfolder webhelper.app \
             -ov -format UDZO -fs HFS+ webhelper-darwin-arm64.dmg
 
       - name: Upload artifacts
