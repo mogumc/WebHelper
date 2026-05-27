@@ -14,6 +14,17 @@ import (
 	"time"
 )
 
+// maxBodySize 限制响应体最大读取量为 50MB，防止 OOM
+const maxBodySize = 50 << 20
+
+// 默认 HTTP 客户端，复用连接池
+var defaultHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+	},
+}
+
 // HttpRequest 请求结构体
 type HttpRequest struct {
 	Method      string            `json:"method"`      // HTTP 方法
@@ -64,39 +75,40 @@ type FileData struct {
 	Path        string `json:"path"`        // 文件路径
 }
 
-// SendRequest 发送 HTTP 请求
-func SendRequest(req *HttpRequest) *HttpResponse {
-	resp := &HttpResponse{
-		Headers: make(map[string]string),
-	}
-
-	if req.URL == "" {
-		resp.Error = "请求地址不能为空"
-		return resp
-	}
-
-	// 补全协议
+// normalizeURL 补全协议前缀
+func normalizeURL(req *HttpRequest) {
 	if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
 		req.URL = "https://" + req.URL
 	}
+}
 
-	// 设置超时
+// buildHTTPClient 创建带代理和 TLS 配置的 HTTP 客户端
+// 无自定义代理且不跳过验证时复用默认客户端
+func buildHTTPClient(req *HttpRequest) *http.Client {
+	// 无自定义设置时复用默认客户端（共享连接池）
+	if req.Proxy == "" && !req.Insecure {
+		if req.Timeout > 0 {
+			return &http.Client{
+				Timeout:   time.Duration(req.Timeout) * time.Second,
+				Transport: defaultHTTPClient.Transport,
+			}
+		}
+		return defaultHTTPClient
+	}
+
+	// 有自定义设置时创建新客户端
 	timeout := time.Duration(req.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
 
-	// 创建 HTTP 客户端
-	client := &http.Client{
-		Timeout: timeout,
-	}
+	client := &http.Client{Timeout: timeout}
 
-	// 配置代理
 	if req.Proxy != "" {
 		proxyURL, err := url.Parse(req.Proxy)
 		if err != nil {
-			resp.Error = fmt.Sprintf("代理地址格式错误: %v", err)
-			return resp
+			// 代理格式错误，降级为默认客户端
+			return defaultHTTPClient
 		}
 		client.Transport = &http.Transport{
 			Proxy: http.ProxyURL(proxyURL),
@@ -106,72 +118,108 @@ func SendRequest(req *HttpRequest) *HttpResponse {
 		}
 	} else if req.Insecure {
 		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
 	}
 
-	// 创建请求体
+	return client
+}
+
+// setupCookies 将请求中的 Cookie 设置到客户端 Jar
+func setupCookies(client *http.Client, req *HttpRequest) {
+	if len(req.Cookies) == 0 {
+		return
+	}
+	cookieJar, _ := cookiejar.New(nil)
+	var cookieList []*http.Cookie
+	for name, value := range req.Cookies {
+		cookieList = append(cookieList, &http.Cookie{Name: name, Value: value})
+	}
+	parsedURL, _ := url.Parse(req.URL)
+	cookieJar.SetCookies(parsedURL, cookieList)
+	client.Jar = cookieJar
+}
+
+// setRequestHeaders 设置自定义请求头（host 单独处理）
+func setRequestHeaders(httpReq *http.Request, req *HttpRequest) {
+	for key, value := range req.Headers {
+		if strings.ToLower(key) == "host" {
+			httpReq.Host = value
+		} else {
+			httpReq.Header.Set(key, value)
+		}
+	}
+}
+
+// parseHTTPResponse 从 http.Response 解析到 HttpResponse
+func parseHTTPResponse(httpResp *http.Response, resp *HttpResponse, start time.Time) {
+	resp.Time = time.Since(start).String()
+
+	// 限制最大读取量防止 OOM
+	body, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodySize))
+	if err != nil {
+		resp.Error = fmt.Sprintf("读取响应失败: %v", err)
+		return
+	}
+
+	resp.StatusCode = httpResp.StatusCode
+	resp.Status = httpResp.Status
+	resp.Body = string(body)
+	resp.ContentLength = httpResp.ContentLength
+	resp.Size = int64(len(body))
+	resp.ContentType = httpResp.Header.Get("Content-Type")
+
+	resp.Headers = make(map[string]string)
+	for key, values := range httpResp.Header {
+		resp.Headers[key] = strings.Join(values, "; ")
+	}
+
+	resp.Cookies = convertCookies(httpResp.Cookies())
+}
+
+// SendRequest 发送 HTTP 请求
+func SendRequest(req *HttpRequest) *HttpResponse {
+	resp := &HttpResponse{}
+
+	if req.URL == "" {
+		resp.Error = "请求地址不能为空"
+		return resp
+	}
+
+	normalizeURL(req)
+
+	client := buildHTTPClient(req)
+
+	// 构造请求体
 	var bodyReader io.Reader
+	var err error
 	contentType := req.ContentType
 
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		switch req.BodyType {
 		case "file":
-			// 文件上传
 			if req.FilePath != "" {
-				file, err := os.Open(req.FilePath)
+				bodyReader, contentType, err = buildFileBody(req.FilePath)
 				if err != nil {
-					resp.Error = fmt.Sprintf("打开文件失败: %v", err)
+					resp.Error = err.Error()
 					return resp
 				}
-				defer file.Close()
-
-				// 获取文件信息
-				fileInfo, err := file.Stat()
-				if err != nil {
-					resp.Error = fmt.Sprintf("获取文件信息失败: %v", err)
-					return resp
-				}
-
-				// 使用 multipart 上传
-				body := &bytes.Buffer{}
-				writer := multipart.NewWriter(body)
-				part, err := writer.CreateFormFile("file", fileInfo.Name())
-				if err != nil {
-					resp.Error = fmt.Sprintf("创建表单文件失败: %v", err)
-					return resp
-				}
-				if _, err := io.Copy(part, file); err != nil {
-					resp.Error = fmt.Sprintf("复制文件内容失败: %v", err)
-					return resp
-				}
-				writer.Close()
-				bodyReader = body
-				contentType = writer.FormDataContentType()
 			}
-
 		case "form":
-			// 表单数据
 			if req.Body != "" {
 				bodyReader = strings.NewReader(req.Body)
 				if contentType == "" {
 					contentType = "application/x-www-form-urlencoded"
 				}
 			}
-
 		case "json":
-			// JSON 数据
 			if req.Body != "" {
 				bodyReader = strings.NewReader(req.Body)
 				if contentType == "" {
 					contentType = "application/json"
 				}
 			}
-
 		default:
-			// 文本数据
 			if req.Body != "" {
 				bodyReader = strings.NewReader(req.Body)
 				if contentType == "" {
@@ -181,46 +229,20 @@ func SendRequest(req *HttpRequest) *HttpResponse {
 		}
 	}
 
-	// 创建请求
 	httpReq, err := http.NewRequest(req.Method, req.URL, bodyReader)
 	if err != nil {
 		resp.Error = fmt.Sprintf("创建请求失败: %v", err)
 		return resp
 	}
 
-	// 设置 Content-Type
 	if contentType != "" {
 		httpReq.Header.Set("Content-Type", contentType)
 	}
 
-	// 设置自定义请求头（需要单独处理 host）
-	for key, value := range req.Headers {
-		if strings.ToLower(key) == "host" {
-			httpReq.Host = value
-		} else {
-			httpReq.Header.Set(key, value)
-		}
-	}
+	setRequestHeaders(httpReq, req)
+	setupCookies(client, req)
 
-	// 设置 Cookie
-	if len(req.Cookies) > 0 {
-		cookieJar, _ := cookiejar.New(nil)
-		var cookieList []*http.Cookie
-		for name, value := range req.Cookies {
-			cookieList = append(cookieList, &http.Cookie{
-				Name:  name,
-				Value: value,
-			})
-		}
-		parsedURL, _ := url.Parse(req.URL)
-		cookieJar.SetCookies(parsedURL, cookieList)
-		client.Jar = cookieJar
-	}
-
-	// 记录开始时间
 	start := time.Now()
-
-	// 发送请求
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
 		resp.Error = fmt.Sprintf("请求失败: %v", err)
@@ -228,95 +250,31 @@ func SendRequest(req *HttpRequest) *HttpResponse {
 	}
 	defer httpResp.Body.Close()
 
-	// 记录耗时
-	resp.Time = time.Since(start).String()
-
-	// 读取响应体
-	body, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Error = fmt.Sprintf("读取响应失败: %v", err)
-		return resp
-	}
-
-	// 设置响应
-	resp.StatusCode = httpResp.StatusCode
-	resp.Status = httpResp.Status
-	resp.Body = string(body)
-	resp.ContentLength = httpResp.ContentLength
-	resp.Size = int64(len(body))
-
-	// 获取 Content-Type
-	resp.ContentType = httpResp.Header.Get("Content-Type")
-
-	// 获取响应头
-	for key, values := range httpResp.Header {
-		resp.Headers[key] = strings.Join(values, "; ")
-	}
-
-	// 获取响应 Cookie
-	resp.Cookies = convertCookies(httpResp.Cookies())
-
+	parseHTTPResponse(httpResp, resp, start)
 	return resp
 }
 
-// SendRequestWithFiles 带文件的请求
+// SendRequestWithFiles 带多文件上传的请求
 func SendRequestWithFiles(req *HttpRequest, files []FileData) *HttpResponse {
-	resp := &HttpResponse{
-		Headers: make(map[string]string),
-	}
+	resp := &HttpResponse{}
 
 	if req.URL == "" {
 		resp.Error = "请求地址不能为空"
 		return resp
 	}
 
-	// 补全协议
-	if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
-		req.URL = "https://" + req.URL
-	}
+	normalizeURL(req)
 
-	// 设置超时
-	timeout := time.Duration(req.Timeout) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
+	client := buildHTTPClient(req)
 
-	// 创建 HTTP 客户端
-	client := &http.Client{
-		Timeout: timeout,
-	}
-
-	// 配置代理
-	if req.Proxy != "" {
-		proxyURL, err := url.Parse(req.Proxy)
-		if err != nil {
-			resp.Error = fmt.Sprintf("代理地址格式错误: %v", err)
-			return resp
-		}
-		client.Transport = &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: req.Insecure,
-			},
-		}
-	} else if req.Insecure {
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		}
-	}
-
-	// 创建 multipart 请求
+	// 构造 multipart 请求体
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	// 添加文本字段
 	if req.Body != "" {
 		_ = writer.WriteField("text", req.Body)
 	}
 
-	// 添加文件
 	for _, file := range files {
 		f, err := os.Open(file.Path)
 		if err != nil {
@@ -339,44 +297,17 @@ func SendRequestWithFiles(req *HttpRequest, files []FileData) *HttpResponse {
 
 	writer.Close()
 
-	// 创建请求
 	httpReq, err := http.NewRequest(req.Method, req.URL, body)
 	if err != nil {
 		resp.Error = fmt.Sprintf("创建请求失败: %v", err)
 		return resp
 	}
 
-	// 设置 Content-Type
 	httpReq.Header.Set("Content-Type", writer.FormDataContentType())
+	setRequestHeaders(httpReq, req)
+	setupCookies(client, req)
 
-	// 设置自定义请求头（需要单独处理 host）
-	for key, value := range req.Headers {
-		if strings.ToLower(key) == "host" {
-			httpReq.Host = value
-		} else {
-			httpReq.Header.Set(key, value)
-		}
-	}
-
-	// 设置 Cookie
-	if len(req.Cookies) > 0 {
-		cookieJar, _ := cookiejar.New(nil)
-		var cookieList []*http.Cookie
-		for name, value := range req.Cookies {
-			cookieList = append(cookieList, &http.Cookie{
-				Name:  name,
-				Value: value,
-			})
-		}
-		parsedURL, _ := url.Parse(req.URL)
-		cookieJar.SetCookies(parsedURL, cookieList)
-		client.Jar = cookieJar
-	}
-
-	// 记录开始时间
 	start := time.Now()
-
-	// 发送请求
 	httpResp, err := client.Do(httpReq)
 	if err != nil {
 		resp.Error = fmt.Sprintf("请求失败: %v", err)
@@ -384,35 +315,34 @@ func SendRequestWithFiles(req *HttpRequest, files []FileData) *HttpResponse {
 	}
 	defer httpResp.Body.Close()
 
-	// 记录耗时
-	resp.Time = time.Since(start).String()
-
-	// 读取响应体
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		resp.Error = fmt.Sprintf("读取响应失败: %v", err)
-		return resp
-	}
-
-	// 设置响应
-	resp.StatusCode = httpResp.StatusCode
-	resp.Status = httpResp.Status
-	resp.Body = string(respBody)
-	resp.ContentLength = httpResp.ContentLength
-	resp.Size = int64(len(respBody))
-
-	// 获取 Content-Type
-	resp.ContentType = httpResp.Header.Get("Content-Type")
-
-	// 获取响应头
-	for key, values := range httpResp.Header {
-		resp.Headers[key] = strings.Join(values, "; ")
-	}
-
-	// 获取响应 Cookie
-	resp.Cookies = convertCookies(httpResp.Cookies())
-
+	parseHTTPResponse(httpResp, resp, start)
 	return resp
+}
+
+// buildFileBody 构造单文件上传的 multipart 请求体
+func buildFileBody(filePath string) (io.Reader, string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, "", fmt.Errorf("打开文件失败: %v", err)
+	}
+	defer file.Close()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, "", fmt.Errorf("获取文件信息失败: %v", err)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", fileInfo.Name())
+	if err != nil {
+		return nil, "", fmt.Errorf("创建表单文件失败: %v", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, "", fmt.Errorf("复制文件内容失败: %v", err)
+	}
+	writer.Close()
+	return body, writer.FormDataContentType(), nil
 }
 
 // ParseHeaders 解析请求头字符串

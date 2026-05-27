@@ -1,13 +1,14 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../composables/useI18n'
-import { 
-  SendHttpRequest, 
-  OpenFileSelect, 
-  GetRequestLogs, 
-  DeleteRequestLog, 
+import {
+  SendHttpRequest,
+  OpenFileSelect,
+  GetRequestLogs,
+  DeleteRequestLog,
   ClearRequestLogs,
-  SearchRequestLogs
+  SearchRequestLogs,
+  GetTimeout
 } from '../../wailsjs/go/service/App'
 import { Delete, Upload, Notebook, Search } from '@element-plus/icons-vue'
 
@@ -28,6 +29,18 @@ const proxy = ref('')
 const timeout = ref(30)
 const insecure = ref(false)
 const saveLog = ref(true)
+
+// 加载全局默认设置
+onMounted(async () => {
+  try {
+    const cfg = await GetTimeout()
+    if (cfg) {
+      timeout.value = cfg.timeout || 30
+    }
+  } catch (e) {
+    console.error('获取默认设置失败:', e)
+  }
+})
 
 // 响应展示相关
 const responseTab = ref('body')

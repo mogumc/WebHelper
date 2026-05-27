@@ -14,8 +14,6 @@ export function DisconnectSocket(arg1:string):Promise<boolean>;
 
 export function ExecuteJs(arg1:string):Promise<api.JsExecResult>;
 
-export function Flashtime():Promise<void>;
-
 export function GetALLLang():Promise<Array<global.LanguageInfo>>;
 
 export function GetCurrentLang():Promise<string>;
@@ -32,15 +30,17 @@ export function GetLogLevel():Promise<string>;
 
 export function GetProcessName():Promise<string>;
 
+export function GetProxy():Promise<service.ProxyConfig>;
+
+export function GetProxyAddress():Promise<string>;
+
 export function GetRequestLog(arg1:number):Promise<api.RequestLog>;
 
 export function GetRequestLogs():Promise<Array<api.RequestLog>>;
 
-export function GetSystemInfo():Promise<service.SystemInfo>;
+export function GetTimeout():Promise<service.TimeoutConfig>;
 
-export function Gettestjson():Promise<string>;
-
-export function Greet(arg1:string):Promise<string>;
+export function GetVersion():Promise<string>;
 
 export function IsSocketConnected(arg1:string):Promise<boolean>;
 
@@ -63,6 +63,10 @@ export function SendSocketMessage(arg1:string,arg2:string):Promise<boolean>;
 export function SetLanguage(arg1:string):Promise<boolean>;
 
 export function SetLogLevel(arg1:string):Promise<boolean>;
+
+export function SetProxy(arg1:string):Promise<boolean>;
+
+export function SetTimeout(arg1:number):Promise<boolean>;
 
 export function WindowClose():Promise<void>;
 

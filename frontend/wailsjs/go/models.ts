@@ -198,28 +198,28 @@ export namespace global {
 
 export namespace service {
 	
-	export class SystemInfo {
-	    os: string;
-	    arch: string;
-	    num_cpu: number;
-	    hostname: string;
-	    go_ver: string;
-	    time: string;
-	    process_name: string;
+	export class ProxyConfig {
+	    url: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new SystemInfo(source);
+	        return new ProxyConfig(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.os = source["os"];
-	        this.arch = source["arch"];
-	        this.num_cpu = source["num_cpu"];
-	        this.hostname = source["hostname"];
-	        this.go_ver = source["go_ver"];
-	        this.time = source["time"];
-	        this.process_name = source["process_name"];
+	        this.url = source["url"];
+	    }
+	}
+	export class TimeoutConfig {
+	    timeout: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TimeoutConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timeout = source["timeout"];
 	    }
 	}
 

@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"webhelper/api"
 	"webhelper/global"
@@ -27,18 +25,6 @@ func NewApp() *App {
 
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
-}
-
-func (a *App) Greet(name string) string {
-	return greet(name)
-}
-
-func (a *App) Flashtime() {
-	flashtime(a)
-}
-
-func (a *App) Gettestjson() string {
-	return getJSONString()
 }
 
 func (a *App) GetLangTextMap() map[string]string {
@@ -67,6 +53,52 @@ func (a *App) SetLanguage(langCode string) bool {
 
 func (a *App) GetCurrentLang() string {
 	return global.GlobalConfig.Language
+}
+
+// ProxyConfig 代理配置
+type ProxyConfig struct {
+	URL string `json:"url"`
+}
+
+// TimeoutConfig 超时配置
+type TimeoutConfig struct {
+	Timeout int `json:"timeout"`
+}
+
+// GetProxy 获取全局代理配置
+func (a *App) GetProxy() ProxyConfig {
+	return ProxyConfig{
+		URL: global.GlobalConfig.ProxyURL,
+	}
+}
+
+// SetProxy 设置全局代理配置
+func (a *App) SetProxy(url string) bool {
+	global.GlobalConfig.ProxyURL = url
+	global.Log.Infof("全局代理已更新: %s", url)
+	return true
+}
+
+// GetProxyAddress 获取全局代理地址字符串（已规范化），供 HTTP 请求使用
+func (a *App) GetProxyAddress() string {
+	return global.GetProxy()
+}
+
+// GetTimeout 获取默认超时设置
+func (a *App) GetTimeout() TimeoutConfig {
+	return TimeoutConfig{
+		Timeout: global.GlobalConfig.Timeout,
+	}
+}
+
+// SetTimeout 设置默认超时
+func (a *App) SetTimeout(timeout int) bool {
+	if timeout < 1 {
+		timeout = 30
+	}
+	global.GlobalConfig.Timeout = timeout
+	global.Log.Infof("默认超时已更新: %d", timeout)
+	return true
 }
 
 func (a *App) GetLogFiles() []string {
@@ -108,28 +140,26 @@ func (a *App) SetLogLevel(level string) bool {
 	switch strings.ToLower(level) {
 	case "debug":
 		global.SetLogLevel(logrus.DebugLevel)
-		global.Log.Debug("日志等级已切换为 Debug")
+		global.GlobalConfig.LogLevel = "debug"
 	case "info":
 		global.SetLogLevel(logrus.InfoLevel)
-		global.Log.Info("日志等级已切换为 Info")
+		global.GlobalConfig.LogLevel = "info"
 	case "warn":
 		global.SetLogLevel(logrus.WarnLevel)
-		global.Log.Warn("日志等级已切换为 Warn")
+		global.GlobalConfig.LogLevel = "warn"
 	case "error":
 		global.SetLogLevel(logrus.ErrorLevel)
-		global.Log.Error("日志等级已切换为 Error")
+		global.GlobalConfig.LogLevel = "error"
 	default:
 		global.Log.Warnf("未知的日志等级: %s", level)
 		return false
 	}
+	global.Log.Infof("日志等级已切换为: %s", strings.ToUpper(global.GlobalConfig.LogLevel))
 	return true
 }
 
 func (a *App) GetLogLevel() string {
-	if global.Log == nil {
-		return "info"
-	}
-	return strings.ToUpper(global.Log.GetLevel().String())
+	return global.GlobalConfig.LogLevel
 }
 
 func (a *App) WindowMinimise() {
@@ -142,20 +172,6 @@ func (a *App) WindowToggleMaximise() {
 
 func (a *App) WindowClose() {
 	runtime.Quit(a.ctx)
-}
-
-func (a *App) GetSystemInfo() SystemInfo {
-	hostname, _ := os.Hostname()
-
-	return SystemInfo{
-		OS:          goruntime.GOOS,
-		Arch:        goruntime.GOARCH,
-		NumCPU:      goruntime.NumCPU(),
-		Hostname:    hostname,
-		GoVer:       goruntime.Version(),
-		Time:        time.Now().Format(time.DateTime),
-		ProcessName: global.GetProcessName(),
-	}
 }
 
 func (a *App) GetProcessName() string {
@@ -248,12 +264,26 @@ func (a *App) SendHttpRequest(method, url, headers, cookies, proxy, bodyType, bo
 	// 解析 Cookie
 	cookieMap := api.ParseCookies(cookies)
 
+	// 代理优先级：请求级代理 > 全局代理
+	requestProxy := global.NormalizeProxy(proxy)
+	if requestProxy == "" {
+		requestProxy = global.GetProxy()
+	}
+
+	// 超时优先级：请求级 > 全局默认
+	if timeout <= 0 {
+		timeout = global.GlobalConfig.Timeout
+	}
+
+	// 日志保存优先级：显式传入 > 全局默认
+	// saveLog 由前端传入，这里不覆盖
+
 	req := &api.HttpRequest{
 		Method:      method,
 		URL:         url,
 		Headers:     headerMap,
 		Cookies:     cookieMap,
-		Proxy:       proxy,
+		Proxy:       requestProxy,
 		BodyType:    bodyType,
 		Body:        body,
 		FilePath:    filePath,
@@ -366,8 +396,9 @@ func (a *App) ConnectSocket(protocol, host string, port int, path string, header
 	if protocol == "tcp" {
 		// TCP 连接
 		config := &api.TCPConfig{
-			Host: host,
-			Port: port,
+			Host:  host,
+			Port:  port,
+			Proxy: global.GetProxy(),
 		}
 
 		err := api.ConnectTCP(config,
@@ -409,6 +440,7 @@ func (a *App) ConnectSocket(protocol, host string, port int, path string, header
 		config := &api.WebSocketConfig{
 			URL:     url,
 			Headers: headerMap,
+			Proxy:   global.GetProxy(),
 		}
 
 		err := api.ConnectWebSocket(config,

@@ -22,10 +22,6 @@ export function ExecuteJs(arg1) {
   return window['go']['service']['App']['ExecuteJs'](arg1);
 }
 
-export function Flashtime() {
-  return window['go']['service']['App']['Flashtime']();
-}
-
 export function GetALLLang() {
   return window['go']['service']['App']['GetALLLang']();
 }
@@ -58,6 +54,14 @@ export function GetProcessName() {
   return window['go']['service']['App']['GetProcessName']();
 }
 
+export function GetProxy() {
+  return window['go']['service']['App']['GetProxy']();
+}
+
+export function GetProxyAddress() {
+  return window['go']['service']['App']['GetProxyAddress']();
+}
+
 export function GetRequestLog(arg1) {
   return window['go']['service']['App']['GetRequestLog'](arg1);
 }
@@ -66,16 +70,12 @@ export function GetRequestLogs() {
   return window['go']['service']['App']['GetRequestLogs']();
 }
 
-export function GetSystemInfo() {
-  return window['go']['service']['App']['GetSystemInfo']();
+export function GetTimeout() {
+  return window['go']['service']['App']['GetTimeout']();
 }
 
-export function Gettestjson() {
-  return window['go']['service']['App']['Gettestjson']();
-}
-
-export function Greet(arg1) {
-  return window['go']['service']['App']['Greet'](arg1);
+export function GetVersion() {
+  return window['go']['service']['App']['GetVersion']();
 }
 
 export function IsSocketConnected(arg1) {
@@ -120,6 +120,14 @@ export function SetLanguage(arg1) {
 
 export function SetLogLevel(arg1) {
   return window['go']['service']['App']['SetLogLevel'](arg1);
+}
+
+export function SetProxy(arg1) {
+  return window['go']['service']['App']['SetProxy'](arg1);
+}
+
+export function SetTimeout(arg1) {
+  return window['go']['service']['App']['SetTimeout'](arg1);
 }
 
 export function WindowClose() {

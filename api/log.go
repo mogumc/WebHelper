@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -32,13 +33,17 @@ type RequestLog struct {
 
 // LogManager 日志管理器
 type LogManager struct {
+	mu        sync.RWMutex
 	logDir    string
 	logs      []*RequestLog
 	maxLogs   int
 	fileName  string
 }
 
-var logManager *LogManager
+var (
+	logManager     *LogManager
+	logManagerOnce sync.Once
+)
 
 // InitLogManager 初始化日志管理器
 func InitLogManager(logDir string) {
@@ -51,11 +56,13 @@ func InitLogManager(logDir string) {
 	logManager.loadLogs()
 }
 
-// GetLogManager 获取日志管理器
+// GetLogManager 获取日志管理器（并发安全的单例）
 func GetLogManager() *LogManager {
-	if logManager == nil {
-		InitLogManager("logs")
-	}
+	logManagerOnce.Do(func() {
+		if logManager == nil {
+			InitLogManager("logs")
+		}
+	})
 	return logManager
 }
 
@@ -97,6 +104,9 @@ func (m *LogManager) saveLogs() error {
 
 // AddLog 添加日志
 func (m *LogManager) AddLog(log *RequestLog) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// 生成序号
 	if len(m.logs) > 0 {
 		log.ID = m.logs[0].ID + 1
@@ -119,11 +129,15 @@ func (m *LogManager) AddLog(log *RequestLog) error {
 
 // GetLogs 获取所有日志
 func (m *LogManager) GetLogs() []*RequestLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.logs
 }
 
 // GetLog 获取单条日志
 func (m *LogManager) GetLog(id int) *RequestLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for _, log := range m.logs {
 		if log.ID == id {
 			return log
@@ -134,6 +148,8 @@ func (m *LogManager) GetLog(id int) *RequestLog {
 
 // DeleteLog 删除日志
 func (m *LogManager) DeleteLog(id int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, log := range m.logs {
 		if log.ID == id {
 			m.logs = append(m.logs[:i], m.logs[i+1:]...)
@@ -145,12 +161,16 @@ func (m *LogManager) DeleteLog(id int) error {
 
 // ClearLogs 清空日志
 func (m *LogManager) ClearLogs() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.logs = make([]*RequestLog, 0)
 	return m.saveLogs()
 }
 
 // SearchLogs 搜索日志
 func (m *LogManager) SearchLogs(keyword string) []*RequestLog {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var result []*RequestLog
 	keyword = strings.ToLower(keyword)
 
@@ -171,17 +191,14 @@ func CreateLogFromResponse(req *HttpRequest, resp *HttpResponse) *RequestLog {
 	// 解析 URL
 	host := ""
 	path := req.URL
-	if strings.HasPrefix(req.URL, "http://") {
-		parts := strings.SplitN(strings.TrimPrefix(req.URL, "http://"), "/", 2)
-		host = parts[0]
-		if len(parts) > 1 {
-			path = "/" + parts[1]
-		}
-	} else if strings.HasPrefix(req.URL, "https://") {
-		parts := strings.SplitN(strings.TrimPrefix(req.URL, "https://"), "/", 2)
-		host = parts[0]
-		if len(parts) > 1 {
-			path = "/" + parts[1]
+	for _, prefix := range []string{"http://", "https://"} {
+		if strings.HasPrefix(req.URL, prefix) {
+			parts := strings.SplitN(strings.TrimPrefix(req.URL, prefix), "/", 2)
+			host = parts[0]
+			if len(parts) > 1 {
+				path = "/" + parts[1]
+			}
+			break
 		}
 	}
 

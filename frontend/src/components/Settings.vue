@@ -1,30 +1,51 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useI18n } from '../composables/useI18n'
-import { GetALLLang, GetCurrentLang, SetLanguage, GetLangTextMap } from '../../wailsjs/go/service/App'
+import {
+  GetALLLang, GetCurrentLang, SetLanguage, GetLangTextMap,
+  GetProxy, SetProxy, GetTimeout, SetTimeout,
+  GetLogLevel, SetLogLevel
+} from '../../wailsjs/go/service/App'
 
 const { t, textMap } = useI18n()
 
 const settings = ref({
-  proxyEnabled: false,
-  proxyHost: '',
-  proxyPort: 7890
+  proxyURL: '',
+  timeout: 30,
+  logLevel: 'info'
 })
 
 const languages = ref([])
 const currentLang = ref('')
 
-// 加载语言列表
+const logLevels = [
+  { label: 'Debug', value: 'debug' },
+  { label: 'Info', value: 'info' },
+  { label: 'Warn', value: 'warn' },
+  { label: 'Error', value: 'error' }
+]
+
+// 加载所有设置
 onMounted(async () => {
   try {
-    const langInfos = await GetALLLang()
+    const [langInfos, proxy, timeoutCfg, logLevel] = await Promise.all([
+      GetALLLang(),
+      GetProxy(),
+      GetTimeout(),
+      GetLogLevel()
+    ])
+
     languages.value = langInfos.map(info => ({
       code: info.language_code,
       name: info.language_name
     }))
     currentLang.value = await GetCurrentLang() || 'zh-CN'
+
+    if (proxy) settings.value.proxyURL = proxy.url || ''
+    if (timeoutCfg) settings.value.timeout = timeoutCfg.timeout || 30
+    settings.value.logLevel = logLevel || 'info'
   } catch (e) {
-    console.error('获取语言列表失败:', e)
+    console.error('获取设置失败:', e)
   }
 })
 
@@ -40,19 +61,46 @@ const handleLangChange = async (langCode) => {
   }
 }
 
-const saveSettings = () => {
-  localStorage.setItem('webhelper-settings', JSON.stringify(settings.value))
-  ElMessage.success(t('settings.msg.saved'))
+// 保存所有设置
+const saveSettings = async () => {
+  try {
+    await Promise.all([
+      SetProxy(settings.value.proxyURL),
+      SetTimeout(settings.value.timeout),
+      SetLogLevel(settings.value.logLevel)
+    ])
+    ElMessage.success(t('settings.msg.saved'))
+  } catch (e) {
+    ElMessage.error('保存设置失败: ' + e)
+  }
 }
 
-const resetSettings = () => {
+// 恢复默认
+const resetSettings = async () => {
   settings.value = {
-    proxyEnabled: false,
-    proxyHost: '',
-    proxyPort: 7890
+    proxyURL: '',
+    timeout: 30,
+    logLevel: 'info'
   }
-  localStorage.removeItem('webhelper-settings')
-  ElMessage.info(t('settings.msg.reset'))
+
+  const defaultLang = 'zh-CN'
+
+  try {
+    await Promise.all([
+      SetProxy(''),
+      SetTimeout(30),
+      SetLogLevel('info'),
+      SetLanguage(defaultLang)
+    ])
+
+    currentLang.value = defaultLang
+    const map = await GetLangTextMap()
+    textMap.value = map || {}
+
+    ElMessage.info(t('settings.msg.reset'))
+  } catch (e) {
+    ElMessage.error('恢复默认失败: ' + e)
+  }
 }
 </script>
 
@@ -62,7 +110,10 @@ const resetSettings = () => {
       <span>{{ t('settings.title') }}</span>
     </div>
 
-    <el-form :model="settings" label-width="100px" class="settings-form">
+    <el-form :model="settings" label-width="120px" class="settings-form">
+      <!-- 外观 -->
+      <el-divider content-position="left">{{ t('settings.form.appearance_divider') }}</el-divider>
+
       <el-form-item :label="t('settings.form.language_label')">
         <el-select v-model="currentLang" style="width: 200px" @change="handleLangChange">
           <el-option
@@ -74,18 +125,37 @@ const resetSettings = () => {
         </el-select>
       </el-form-item>
 
-      <el-divider content-position="left">{{ t('settings.form.proxy_divider') }}</el-divider>
+      <!-- 网络 -->
+      <el-divider content-position="left">{{ t('settings.form.network_divider') }}</el-divider>
 
-      <el-form-item :label="t('settings.form.enable_proxy_label')">
-        <el-switch v-model="settings.proxyEnabled" />
+      <el-form-item :label="t('settings.form.proxy_label')">
+        <el-input
+          v-model="settings.proxyURL"
+          :placeholder="t('settings.form.proxy_placeholder')"
+          style="width: 320px"
+          clearable
+        />
+        <div class="form-tip">{{ t('settings.form.proxy_tip') }}</div>
       </el-form-item>
 
-      <el-form-item v-if="settings.proxyEnabled" :label="t('settings.form.proxy_address_label')">
-        <el-input v-model="settings.proxyHost" :placeholder="t('settings.form.proxy_address_placeholder')" style="width: 200px" />
+      <el-form-item :label="t('settings.form.timeout_label')">
+        <el-input-number v-model="settings.timeout" :min="1" :max="300" />
+        <span class="form-unit">{{ t('settings.form.timeout_unit') }}</span>
       </el-form-item>
 
-      <el-form-item v-if="settings.proxyEnabled" :label="t('settings.form.proxy_port_label')">
-        <el-input-number v-model="settings.proxyPort" :min="1" :max="65535" />
+      <!-- 日志 -->
+      <el-divider content-position="left">{{ t('settings.form.log_divider') }}</el-divider>
+
+      <el-form-item :label="t('settings.form.log_level_label')">
+        <el-select v-model="settings.logLevel" style="width: 200px">
+          <el-option
+            v-for="level in logLevels"
+            :key="level.value"
+            :label="level.label"
+            :value="level.value"
+          />
+        </el-select>
+        <span class="form-tip-inline">{{ t('settings.form.log_level_tip') }}</span>
       </el-form-item>
 
       <el-divider />
@@ -118,5 +188,23 @@ const resetSettings = () => {
 
 .settings-form {
   max-width: 600px;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.form-unit {
+  margin-left: 8px;
+  color: #606266;
+}
+
+.form-tip-inline {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

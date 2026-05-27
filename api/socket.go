@@ -11,6 +11,7 @@ import (
 	"webhelper/global"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/proxy"
 )
 
 // WebSocketClient WebSocket 客户端
@@ -27,6 +28,7 @@ type WebSocketClient struct {
 type WebSocketConfig struct {
 	URL      string            `json:"url"`
 	Headers  map[string]string `json:"headers"`
+	Proxy    string            `json:"proxy"`    // 代理地址，支持 http:// 和 socks5://
 	Insecure bool              `json:"insecure"`
 }
 
@@ -37,7 +39,10 @@ type WebSocketMessage struct {
 	Time    string `json:"time"`
 }
 
-var wsClient *WebSocketClient
+var (
+	wsClient     *WebSocketClient
+	wsClientOnce sync.Once
+)
 
 // NewWebSocketClient 创建 WebSocket 客户端
 func NewWebSocketClient() *WebSocketClient {
@@ -67,13 +72,23 @@ func (c *WebSocketClient) Connect(config *WebSocketConfig, onMessage func(string
 		header.Set(key, value)
 	}
 
-	// 创建 Dialer（最简配置）
+	// 创建 Dialer
 	dialer := &websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 	}
 
+	// 配置代理
+	proxyAddr := global.NormalizeProxy(config.Proxy)
+	if proxyAddr != "" {
+		proxyURL, err := url.Parse(proxyAddr)
+		if err != nil {
+			return fmt.Errorf("代理地址格式错误: %v", err)
+		}
+		dialer.Proxy = http.ProxyURL(proxyURL)
+	}
+
 	// 连接
-	global.Log.Infof("正在连接 WebSocket: %s", u.String())
+	global.Log.Infof("正在连接 WebSocket: %s (proxy=%s)", u.String(), proxyAddr)
 	conn, _, err := dialer.Dial(u.String(), header)
 	if err != nil {
 		return fmt.Errorf("连接失败: %v", err)
@@ -150,11 +165,11 @@ func (c *WebSocketClient) IsConnected() bool {
 	return c.isConnected
 }
 
-// GetWebSocketClient 获取 WebSocket 客户端
+// GetWebSocketClient 获取 WebSocket 客户端（并发安全的单例）
 func GetWebSocketClient() *WebSocketClient {
-	if wsClient == nil {
+	wsClientOnce.Do(func() {
 		wsClient = NewWebSocketClient()
-	}
+	})
 	return wsClient
 }
 
@@ -194,8 +209,9 @@ type TCPClient struct {
 
 // TCPConfig TCP 配置
 type TCPConfig struct {
-	Host string `json:"host"`
-	Port int    `json:"port"`
+	Host  string `json:"host"`
+	Port  int    `json:"port"`
+	Proxy string `json:"proxy"` // 代理地址，支持 socks5://
 }
 
 // TCPMessage TCP 消息
@@ -205,7 +221,10 @@ type TCPMessage struct {
 	Time    string `json:"time"`
 }
 
-var tcpClient *TCPClient
+var (
+	tcpClient     *TCPClient
+	tcpClientOnce sync.Once
+)
 
 // NewTCPClient 创建 TCP 客户端
 func NewTCPClient() *TCPClient {
@@ -224,7 +243,43 @@ func (c *TCPClient) Connect(config *TCPConfig, onMessage func(string), onError f
 	}
 
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+
+	// 配置代理
+	proxyAddr := global.NormalizeProxy(config.Proxy)
+	var conn net.Conn
+	var err error
+
+	if proxyAddr != "" {
+		// 通过代理连接
+		proxyURL, parseErr := url.Parse(proxyAddr)
+		if parseErr != nil {
+			return fmt.Errorf("代理地址格式错误: %v", parseErr)
+		}
+
+		switch proxyURL.Scheme {
+		case "socks5", "socks4":
+			// SOCKS 代理
+			auth := &proxy.Auth{}
+			if proxyURL.User != nil {
+				auth.User = proxyURL.User.Username()
+				if p, ok := proxyURL.User.Password(); ok {
+					auth.Password = p
+				}
+			}
+			dialer, proxyErr := proxy.SOCKS5("tcp", proxyURL.Host, auth, proxy.Direct)
+			if proxyErr != nil {
+				return fmt.Errorf("创建 SOCKS 代理失败: %v", proxyErr)
+			}
+			conn, err = dialer.Dial("tcp", addr)
+		default:
+			// HTTP 代理（通过 CONNECT 隧道）
+			conn, err = httpConnectProxy(addr, proxyAddr)
+		}
+	} else {
+		// 直连
+		conn, err = net.DialTimeout("tcp", addr, 10*time.Second)
+	}
+
 	if err != nil {
 		return fmt.Errorf("连接失败: %v", err)
 	}
@@ -235,11 +290,69 @@ func (c *TCPClient) Connect(config *TCPConfig, onMessage func(string), onError f
 	c.onError = onError
 	c.onClose = onClose
 
+	global.Log.Infof("TCP 连接成功: %s (proxy=%s)", addr, proxyAddr)
+
 	// 启动消息监听
 	go c.readMessages()
 
 	return nil
 }
+
+// httpConnectProxy 通过 HTTP CONNECT 代理建立 TCP 连接
+func httpConnectProxy(target, proxyAddr string) (net.Conn, error) {
+	proxyURL, err := url.Parse(proxyAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	// 连接代理
+	conn, err := net.DialTimeout("tcp", proxyURL.Host, 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	// 发送 CONNECT 请求
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	_, err = conn.Write([]byte(connectReq))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// 读取响应
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	// 检查 200 状态
+	resp := string(buf[:n])
+	if !contains(resp, "200") {
+		conn.Close()
+		return nil, fmt.Errorf("代理连接失败: %s", resp)
+	}
+
+	return conn, nil
+}
+
+// contains 检查字符串是否包含子串
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// tcpBufSize TCP 读取缓冲区大小，64KB 覆盖绝大多数调试场景
+const tcpBufSize = 64 << 10
 
 // readMessages 读取消息
 func (c *TCPClient) readMessages() {
@@ -252,7 +365,7 @@ func (c *TCPClient) readMessages() {
 		}
 	}()
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, tcpBufSize)
 	for {
 		n, err := c.conn.Read(buf)
 		if err != nil {
@@ -300,11 +413,11 @@ func (c *TCPClient) IsConnected() bool {
 	return c.isConnected
 }
 
-// GetTCPClient 获取 TCP 客户端
+// GetTCPClient 获取 TCP 客户端（并发安全的单例）
 func GetTCPClient() *TCPClient {
-	if tcpClient == nil {
+	tcpClientOnce.Do(func() {
 		tcpClient = NewTCPClient()
-	}
+	})
 	return tcpClient
 }
 
