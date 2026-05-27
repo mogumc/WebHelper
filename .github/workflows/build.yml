@@ -210,6 +210,12 @@ jobs:
             -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-darwin-amd64
 
+      - name: Package amd64
+        run: |
+          cd build/bin
+          hdiutil create -volname "WebHelper" -srcfolder webhelper-darwin-amd64.app \
+            -ov -format UDZO -fs HFS+ webhelper-darwin-amd64.dmg
+
       - name: Build arm64
         env:
           CGO_ENABLED: 1
@@ -221,12 +227,19 @@ jobs:
             -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-darwin-arm64
 
+      - name: Package arm64
+        run: |
+          cd build/bin
+          hdiutil create -volname "WebHelper" -srcfolder webhelper-darwin-arm64.app \
+            -ov -format UDZO -fs HFS+ webhelper-darwin-arm64.dmg
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
+          name: webhelper-darwin
           path: |
-            build/bin/webhelper-darwin-amd64
-            build/bin/webhelper-darwin-arm64
+            build/bin/webhelper-darwin-amd64.dmg
+            build/bin/webhelper-darwin-arm64.dmg
 
   release:
     needs: [build-windows, build-linux, build-linux-new, build-macos]
