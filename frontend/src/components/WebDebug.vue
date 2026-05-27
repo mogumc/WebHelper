@@ -364,11 +364,11 @@ const copyToJsonParser = () => {
       
       <div class="response-content">
         <div v-if="responseTab === 'body'" class="response-body-container">
-          <el-input 
-            :value="response.body || ''" 
-            type="textarea" 
-            :rows="18" 
-            readonly 
+          <el-input
+            :value="response.body || ''"
+            type="textarea"
+            :rows="18"
+            readonly
             :placeholder="t('webdebug.response.body_placeholder')"
           />
           <div class="response-actions" v-if="hasResponse && response.body && isJson">
@@ -379,11 +379,11 @@ const copyToJsonParser = () => {
         </div>
         
         <div v-if="responseTab === 'headers'" class="response-headers-container">
-          <el-input 
-            :value="formatResponseHeaders" 
-            type="textarea" 
-            :rows="18" 
-            readonly 
+          <el-input
+            :value="formatResponseHeaders"
+            type="textarea"
+            :rows="18"
+            readonly
             :placeholder="t('webdebug.response.headers_placeholder')"
           />
         </div>
@@ -504,7 +504,6 @@ const copyToJsonParser = () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 100%;
 }
 
 .request-section {
@@ -601,7 +600,6 @@ const copyToJsonParser = () => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex-shrink: 0;
 }
 
 .response-header {
