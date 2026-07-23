@@ -45,7 +45,8 @@ jobs:
         run: |
           wails build `
             -platform windows/amd64 `
-            -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" `
+            -trimpath `
+            -ldflags "-s -w -X webhelper/global.Version=${{ steps.version.outputs.version }}" `
             -o webhelper-windows-amd64.exe
 
       - name: Upload artifact
@@ -102,7 +103,8 @@ jobs:
         run: |
           wails build \
             -platform linux/amd64 \
-            -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -ldflags "-s -w -X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-linux-amd64
 
       - name: Upload artifact
@@ -160,7 +162,8 @@ jobs:
           wails build \
             -platform linux/amd64 \
             -tags webkit2_41 \
-            -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -ldflags "-s -w -X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-linux-amd64-webkit2_41
 
       - name: Upload artifact
@@ -207,7 +210,8 @@ jobs:
         run: |
           wails build \
             -platform darwin/amd64 \
-            -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -ldflags "-s -w -X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-darwin-amd64
 
       - name: Package amd64
@@ -224,7 +228,8 @@ jobs:
         run: |
           wails build \
             -platform darwin/arm64 \
-            -ldflags "-X webhelper/global.Version=${{ steps.version.outputs.version }}" \
+            -trimpath \
+            -ldflags "-s -w -X webhelper/global.Version=${{ steps.version.outputs.version }}" \
             -o webhelper-darwin-arm64
 
       - name: Package arm64
