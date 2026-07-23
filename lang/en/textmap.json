@@ -114,6 +114,8 @@
     "jsonparser.msg.copied": "Copied to clipboard",
     "jsonparser.msg.copy_failed": "Copy failed",
     "jsonparser.msg.received": "JSON data received",
+    "jsonparser.panel.path": "Path",
+    "jsonparser.panel.value": "Value",
 
     "socket.connection.title": "Connection",
     "socket.connection.status.connected": "Connected",

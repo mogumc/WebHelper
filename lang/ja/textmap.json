@@ -114,6 +114,8 @@
     "jsonparser.msg.copied": "クリップボードにコピーしました",
     "jsonparser.msg.copy_failed": "コピーに失敗しました",
     "jsonparser.msg.received": "JSONデータを受信しました",
+    "jsonparser.panel.path": "パス",
+    "jsonparser.panel.value": "値",
 
     "socket.connection.title": "接続設定",
     "socket.connection.status.connected": "接続済み",

@@ -114,6 +114,8 @@
     "jsonparser.msg.copied": "已复制到剪贴板",
     "jsonparser.msg.copy_failed": "复制失败",
     "jsonparser.msg.received": "已接收 JSON 数据",
+    "jsonparser.panel.path": "路径",
+    "jsonparser.panel.value": "值",
 
     "socket.connection.title": "连接配置",
     "socket.connection.status.connected": "已连接",

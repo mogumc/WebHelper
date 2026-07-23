@@ -114,6 +114,8 @@
     "jsonparser.msg.copied": "클립보드에 복사됨",
     "jsonparser.msg.copy_failed": "복사 실패",
     "jsonparser.msg.received": "JSON 데이터 수신됨",
+    "jsonparser.panel.path": "경로",
+    "jsonparser.panel.value": "값",
 
     "socket.connection.title": "연결 설정",
     "socket.connection.status.connected": "연결됨",
