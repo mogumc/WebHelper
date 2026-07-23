@@ -406,7 +406,7 @@ const copyToJsonParser = () => {
       width="90%"
       :style="{ maxWidth: '900px' }"
       top="5vh"
-      :close-on-click-modal="false"
+      :close-on-click-modal="true"
     >
       <div class="log-dialog-content">
         <div class="log-list-panel">
@@ -455,6 +455,7 @@ const copyToJsonParser = () => {
                 circle 
                 class="log-delete-btn"
                 @click.stop="deleteLog(log.id)"
+                @dblclick.stop
               />
             </div>
             <el-empty v-if="logs.length === 0" :description="t('webdebug.log.empty')" />
