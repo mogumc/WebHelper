@@ -1,28 +1,32 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from '../composables/useI18n'
+import JsonTreeNode from './JsonTreeNode.vue'
 
 const { t } = useI18n()
 
 const input = ref('')
 const parsedData = ref(null)
 const error = ref('')
-const viewMode = ref('tree') // tree, table, raw
+const viewMode = ref('tree')
 const expandedKeys = ref(new Set())
 const searchKeyword = ref('')
+const selectedPath = ref('')
+const selectedValue = ref(null)
 
 // 解析 JSON
 const parseJson = () => {
   error.value = ''
   parsedData.value = null
-  
+  selectedPath.value = ''
+  selectedValue.value = null
+
   if (!input.value.trim()) {
     return
   }
 
   try {
     parsedData.value = JSON.parse(input.value)
-    // 自动展开第一层
     expandFirstLevel()
   } catch (e) {
     error.value = t('jsonparser.msg.parse_error') + e.message
@@ -33,13 +37,19 @@ const parseJson = () => {
 const expandFirstLevel = () => {
   expandedKeys.value.clear()
   if (parsedData.value && typeof parsedData.value === 'object') {
+    expandedKeys.value.add('$')
     if (Array.isArray(parsedData.value)) {
-      parsedData.value.forEach((_, index) => {
-        expandedKeys.value.add(`root-${index}`)
+      parsedData.value.forEach((item, index) => {
+        if (typeof item === 'object' && item !== null) {
+          expandedKeys.value.add(`$[${index}]`)
+        }
       })
     } else {
       Object.keys(parsedData.value).forEach(key => {
-        expandedKeys.value.add(`root-${key}`)
+        const val = parsedData.value[key]
+        if (typeof val === 'object' && val !== null) {
+          expandedKeys.value.add(`$.${key}`)
+        }
       })
     }
   }
@@ -52,11 +62,34 @@ const toggleExpand = (key) => {
   } else {
     expandedKeys.value.add(key)
   }
+  // 强制响应式更新
+  expandedKeys.value = new Set(expandedKeys.value)
 }
 
-// 检查是否展开
-const isExpanded = (key) => {
-  return expandedKeys.value.has(key)
+// 选中节点
+const onSelectNode = (path) => {
+  selectedPath.value = path
+  selectedValue.value = resolvePath(parsedData.value, path)
+}
+
+// 根据路径字符串解析值
+const resolvePath = (data, path) => {
+  if (path === '$') return data
+  const segments = path
+    .replace(/^\$\./, '')
+    .replace(/\[(\d+)\]/g, '.$1')
+    .replace(/\['(.+?)'\]/g, '.$1')
+    .split('.')
+  let current = data
+  for (const seg of segments) {
+    if (current == null) return null
+    if (Array.isArray(current)) {
+      current = current[parseInt(seg)]
+    } else {
+      current = current[seg]
+    }
+  }
+  return current
 }
 
 // 获取值类型
@@ -66,27 +99,15 @@ const getValueType = (value) => {
   return typeof value
 }
 
-// 获取类型颜色
-const getTypeColor = (type) => {
-  const colors = {
-    'string': '#67c23a',
-    'number': '#e6a23c',
-    'boolean': '#409eff',
-    'null': '#909399',
-    'object': '#f56c6c',
-    'array': '#9b59b6'
-  }
-  return colors[type] || '#909399'
-}
-
 // 格式化值显示
 const formatValue = (value) => {
   if (value === null) return 'null'
-  if (typeof value === 'string') return `"${value}"`
+  if (typeof value === 'object') return JSON.stringify(value, null, 2)
+  if (typeof value === 'string') return value
   return String(value)
 }
 
-// 复制到剪贴板
+// 复��到剪贴板
 const copyToClipboard = async (text) => {
   try {
     await navigator.clipboard.writeText(text)
@@ -103,10 +124,21 @@ const copyJson = () => {
   }
 }
 
-// 复制单个值
-const copyValue = (value) => {
-  const text = typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
-  copyToClipboard(text)
+// 复制选中路径
+const copyPath = () => {
+  if (selectedPath.value) {
+    copyToClipboard(selectedPath.value)
+  }
+}
+
+// 复制选中值
+const copySelectedValue = () => {
+  if (selectedValue.value !== null) {
+    const text = typeof selectedValue.value === 'object'
+      ? JSON.stringify(selectedValue.value, null, 2)
+      : String(selectedValue.value)
+    copyToClipboard(text)
+  }
 }
 
 // 清空
@@ -115,36 +147,20 @@ const clearAll = () => {
   parsedData.value = null
   error.value = ''
   expandedKeys.value.clear()
+  selectedPath.value = ''
+  selectedValue.value = null
 }
 
 // 统计信息
 const stats = computed(() => {
   if (!parsedData.value) return null
-  
-  const count = {
-    objects: 0,
-    arrays: 0,
-    strings: 0,
-    numbers: 0,
-    booleans: 0,
-    nulls: 0
-  }
+
+  const count = { objects: 0, arrays: 0, strings: 0, numbers: 0, booleans: 0, nulls: 0 }
 
   const traverse = (value) => {
-    if (value === null) {
-      count.nulls++
-      return
-    }
-    if (Array.isArray(value)) {
-      count.arrays++
-      value.forEach(traverse)
-      return
-    }
-    if (typeof value === 'object') {
-      count.objects++
-      Object.values(value).forEach(traverse)
-      return
-    }
+    if (value === null) { count.nulls++; return }
+    if (Array.isArray(value)) { count.arrays++; value.forEach(traverse); return }
+    if (typeof value === 'object') { count.objects++; Object.values(value).forEach(traverse); return }
     switch (typeof value) {
       case 'string': count.strings++; break
       case 'number': count.numbers++; break
@@ -156,13 +172,15 @@ const stats = computed(() => {
   return count
 })
 
-// 监听输入变化
+// 监听输入��化
 watch(input, () => {
   if (input.value.trim()) {
     parseJson()
   } else {
     parsedData.value = null
     error.value = ''
+    selectedPath.value = ''
+    selectedValue.value = null
   }
 })
 
@@ -184,8 +202,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="json-parser">
-    <div class="toolbar">
+  <div class="json-parser-wrap">
+    <div class="json-parser">
+      <div class="toolbar">
       <div class="toolbar-left">
         <span class="toolbar-title">{{ t('jsonparser.title') }}</span>
         <template v-if="stats">
@@ -221,138 +240,37 @@ onUnmounted(() => {
 
       <div class="output-section">
         <div class="section-header">{{ t('jsonparser.section.result') }}</div>
-        
+
+        <!-- 树形视图 -->
         <div v-if="viewMode === 'tree' && parsedData" class="tree-view">
-          <div class="tree-node root">
-            <div class="node-header" @click="toggleExpand('root')">
-              <span class="expand-icon">{{ isExpanded('root') ? '▼' : '▶' }}</span>
-              <span class="node-type" :style="{ color: getTypeColor(getValueType(parsedData)) }">
-                {{ getValueType(parsedData) }}
-              </span>
-              <span class="node-info" v-if="Array.isArray(parsedData)">
-                Array[{{ parsedData.length }}]
-              </span>
-            </div>
-            <div class="node-children" v-if="isExpanded('root')">
-              <template v-if="Array.isArray(parsedData)">
-                <div v-for="(item, index) in parsedData" :key="index" class="tree-node">
-                  <div class="node-header" @click="toggleExpand(`root-${index}`)">
-                    <span class="expand-icon">{{ isExpanded(`root-${index}`) ? '▼' : '▶' }}</span>
-                    <span class="node-index">[{{ index }}]</span>
-                    <span class="node-type" :style="{ color: getTypeColor(getValueType(item)) }">
-                      {{ getValueType(item) }}
-                    </span>
-                    <span class="node-preview" v-if="typeof item !== 'object' || item === null">
-                      {{ formatValue(item) }}
-                    </span>
-                    <span class="node-preview" v-else-if="Array.isArray(item)">
-                      Array[{{ item.length }}]
-                    </span>
-                    <span class="node-preview" v-else>
-                      Object{ {{ Object.keys(item).length }} }
-                    </span>
-                    <el-button size="small" text @click.stop="copyValue(item)">{{ t('jsonparser.btn.copy') }}</el-button>
-                  </div>
-                  <div class="node-children" v-if="isExpanded(`root-${index}`) && typeof item === 'object' && item !== null">
-                    <template v-if="Array.isArray(item)">
-                      <div v-for="(subItem, subIndex) in item" :key="subIndex" class="tree-node leaf">
-                        <div class="node-header">
-                          <span class="node-index">[{{ subIndex }}]</span>
-                          <span class="node-type" :style="{ color: getTypeColor(getValueType(subItem)) }">
-                            {{ getValueType(subItem) }}
-                          </span>
-                          <span class="node-value">{{ formatValue(subItem) }}</span>
-                        </div>
-                      </div>
-                    </template>
-                    <template v-else>
-                      <div v-for="(subValue, subKey) in item" :key="subKey" class="tree-node leaf">
-                        <div class="node-header">
-                          <span class="node-key">{{ subKey }}:</span>
-                          <span class="node-type" :style="{ color: getTypeColor(getValueType(subValue)) }">
-                            {{ getValueType(subValue) }}
-                          </span>
-                          <span class="node-value">{{ formatValue(subValue) }}</span>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-              <template v-else>
-                <div v-for="(value, key) in parsedData" :key="key" class="tree-node">
-                  <div class="node-header" @click="toggleExpand(`root-${key}`)">
-                    <span class="expand-icon">{{ isExpanded(`root-${key}`) ? '▼' : '▶' }}</span>
-                    <span class="node-key">{{ key }}:</span>
-                    <span class="node-type" :style="{ color: getTypeColor(getValueType(value)) }">
-                      {{ getValueType(value) }}
-                    </span>
-                    <span class="node-preview" v-if="typeof value !== 'object' || value === null">
-                      {{ formatValue(value) }}
-                    </span>
-                    <span class="node-preview" v-else-if="Array.isArray(value)">
-                      Array[{{ value.length }}]
-                    </span>
-                    <span class="node-preview" v-else>
-                      Object{ {{ Object.keys(value).length }} }
-                    </span>
-                    <el-button size="small" text @click.stop="copyValue(value)">{{ t('jsonparser.btn.copy') }}</el-button>
-                  </div>
-                  <div class="node-children" v-if="isExpanded(`root-${key}`) && typeof value === 'object' && value !== null">
-                    <template v-if="Array.isArray(value)">
-                      <div v-for="(subItem, subIndex) in value" :key="subIndex" class="tree-node leaf">
-                        <div class="node-header">
-                          <span class="node-index">[{{ subIndex }}]</span>
-                          <span class="node-type" :style="{ color: getTypeColor(getValueType(subItem)) }">
-                            {{ getValueType(subItem) }}
-                          </span>
-                          <span class="node-value">{{ formatValue(subItem) }}</span>
-                        </div>
-                      </div>
-                    </template>
-                    <template v-else>
-                      <div v-for="(subValue, subKey) in value" :key="subKey" class="tree-node leaf">
-                        <div class="node-header">
-                          <span class="node-key">{{ subKey }}:</span>
-                          <span class="node-type" :style="{ color: getTypeColor(getValueType(subValue)) }">
-                            {{ getValueType(subValue) }}
-                          </span>
-                          <span class="node-value">{{ formatValue(subValue) }}</span>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
+          <JsonTreeNode
+            :value="parsedData"
+            path="$"
+            :depth="0"
+            :expandedKeys="expandedKeys"
+            :selectedPath="selectedPath"
+            @toggle-expand="toggleExpand"
+            @select-node="onSelectNode"
+          />
         </div>
 
+        <!-- ���格视图 -->
         <div v-if="viewMode === 'table' && parsedData" class="table-view">
-          <el-table :data="Array.isArray(parsedData) ? parsedData.map((item, index) => ({ _index: index, _value: item })) : Object.entries(parsedData).map(([key, value]) => ({ _key: key, _value: value }))" border stripe max-height="500">
-            <el-table-column v-if="!Array.isArray(parsedData)" prop="_key" :label="t('jsonparser.table.column.key')" width="200" />
-            <el-table-column v-else prop="_index" :label="t('jsonparser.table.column.index')" width="100" />
-            <el-table-column prop="_value" :label="t('jsonparser.table.column.value')">
-              <template #default="{ row }">
-                <div class="table-value">
-                  <el-tag :color="getTypeColor(getValueType(row._value))" effect="dark" size="small" style="margin-right: 8px">
-                    {{ getValueType(row._value) }}
-                  </el-tag>
-                  <span>{{ typeof row._value === 'object' ? JSON.stringify(row._value) : formatValue(row._value) }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="t('jsonparser.table.column.action')" width="80">
-              <template #default="{ row }">
-                <el-button size="small" text @click="copyValue(row._value)">{{ t('jsonparser.btn.copy') }}</el-button>
-              </template>
-            </el-table-column>
+          <el-table
+            :data="Array.isArray(parsedData)
+              ? parsedData.map((item, i) => ({ _key: i, _value: item }))
+              : Object.entries(parsedData).map(([k, v]) => ({ _key: k, _value: v }))"
+            border stripe max-height="500"
+          >
+            <el-table-column prop="_key" :label="Array.isArray(parsedData) ? t('jsonparser.table.column.index') : t('jsonparser.table.column.key')" width="180" />
+            <el-table-column prop="_value" :label="t('jsonparser.table.column.value')" min-width="200" />
           </el-table>
         </div>
 
-        <div v-if="viewMode === 'raw'" class="raw-view">
+        <!-- 原始视图 -->
+        <div v-if="viewMode === 'raw' && parsedData" class="raw-view">
           <el-input
-            :value="parsedData ? JSON.stringify(parsedData, null, 2) : ''"
+            :model-value="JSON.stringify(parsedData, null, 2)"
             type="textarea"
             :rows="20"
             readonly
@@ -360,36 +278,66 @@ onUnmounted(() => {
           />
         </div>
 
-        <el-empty v-if="!parsedData && !error && viewMode !== 'raw'" :description="t('jsonparser.empty')" />
+        <el-empty v-if="!parsedData && !error" :description="t('jsonparser.empty')" />
       </div>
     </div>
 
-    <div v-if="error" class="error-message">
-      <el-alert :title="error" type="error" show-icon :closable="false" />
+    <!-- 键值选择面板 -->
+    <div v-if="selectedPath" class="key-value-panel">
+      <div class="kv-box">
+        <div class="kv-label">{{ t('jsonparser.panel.path') }}</div>
+        <div class="kv-content mono">
+          {{ selectedPath }}
+          <el-button size="small" text class="kv-copy-btn" @click="copyPath">{{ t('jsonparser.btn.copy') }}</el-button>
+        </div>
+      </div>
+      <div class="kv-box">
+        <div class="kv-label">{{ t('jsonparser.panel.value') }}</div>
+        <div class="kv-content mono">
+          {{ formatValue(selectedValue) }}
+          <el-button size="small" text class="kv-copy-btn" @click="copySelectedValue">{{ t('jsonparser.btn.copy') }}</el-button>
+        </div>
+      </div>
+    </div>
+
+      <div v-if="error" class="error-message">
+        <el-alert :title="error" type="error" show-icon :closable="false" />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.json-parser-wrap {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  overflow: hidden;
+}
+
 .json-parser {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  height: 100%;
+  gap: 8px;
 }
 
 .toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px 12px;
   background-color: #f8f9fa;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .toolbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .toolbar-title {
@@ -406,121 +354,133 @@ onUnmounted(() => {
 .parser-content {
   flex: 1;
   display: flex;
-  gap: 16px;
+  gap: 12px;
   overflow: hidden;
+  min-height: 0;
 }
 
 .input-section,
 .output-section {
   flex: 1;
+  min-width: 0;
+  width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 0;
+  gap: 6px;
 }
 
 .section-header {
   font-weight: 500;
   color: #606266;
   padding: 0 4px;
+  flex-shrink: 0;
 }
 
-/* 树形视图样式 */
+/* 输入区滚动 */
+.input-section :deep(.el-textarea) {
+  flex: 1;
+  min-height: 0;
+}
+
+.input-section :deep(.el-textarea__inner) {
+  height: 100% !important;
+  resize: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+/* 树形视图 */
 .tree-view {
   flex: 1;
   overflow: auto;
   border: 1px solid #ebeef5;
   border-radius: 4px;
-  padding: 12px;
+  padding: 8px 10px;
   background: #fafafa;
+  min-height: 0;
 }
 
-.tree-node {
-  margin-left: 20px;
+/* 表格视图 */
+.table-view {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 
-.tree-node.root {
-  margin-left: 0;
+/* 原始视图 */
+.raw-view {
+  flex: 1;
+  min-height: 0;
 }
 
-.tree-node.leaf {
-  margin-left: 20px;
+.raw-view :deep(.el-textarea) {
+  height: 100%;
 }
 
-.node-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background-color 0.2s;
-}
-
-.node-header:hover {
-  background-color: #e9ecef;
-}
-
-.expand-icon {
-  width: 16px;
-  font-size: 12px;
-  color: #909399;
-}
-
-.node-type {
-  font-size: 12px;
-  font-weight: 500;
-  padding: 2px 6px;
-  background-color: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-}
-
-.node-key {
-  font-weight: 500;
-  color: #303133;
-}
-
-.node-index {
-  color: #909399;
-}
-
-.node-preview {
-  color: #606266;
-  font-size: 13px;
-}
-
-.node-value {
-  color: #606266;
+.raw-view :deep(.el-textarea__inner) {
+  height: 100% !important;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  white-space: pre-wrap;
   word-break: break-all;
 }
 
-.node-children {
-  margin-left: 20px;
-  border-left: 1px dashed #dcdfe6;
-  padding-left: 8px;
-}
-
-/* 表格视图样式 */
-.table-view {
-  flex: 1;
-}
-
-.table-value {
+/* 键值选择面板 */
+.key-value-panel {
   display: flex;
-  align-items: center;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  gap: 10px;
+  flex-shrink: 0;
+  min-height: 0;
 }
 
-/* 原始视图样式 */
-.raw-view {
+.kv-box {
   flex: 1;
+  min-width: 0;
+  width: 0;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+  background: #fafafa;
+  display: flex;
+  flex-direction: column;
 }
 
-.raw-view :deep(textarea) {
+.kv-label {
+  font-size: 12px;
+  color: #909399;
+  padding: 4px 10px;
+  border-bottom: 1px solid #ebeef5;
+  flex-shrink: 0;
+  background: #f5f7fa;
+}
+
+.kv-content {
+  flex: 1;
+  padding: 6px 10px;
+  overflow: auto;
+  position: relative;
+  font-size: 13px;
+  color: #303133;
+}
+
+.kv-content:hover .kv-copy-btn {
+  opacity: 1;
+}
+
+.kv-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mono {
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .error-message {
-  margin-top: 8px;
+  flex-shrink: 0;
 }
 </style>
