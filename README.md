@@ -102,4 +102,4 @@ git push origin v1.0.0
 
 ## License
 
-GPL-3.0
+MIT License
